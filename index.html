@@ -1,0 +1,558 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width, initial-scale=1.0">
+<title>CRTV — YouTube on a CRT</title>
+<style>
+  :root{
+    --sl-opacity:.5;      /* scanline strength */
+    --sl-size:3px;        /* scanline spacing */
+    --noise-opacity:.35;  /* static amount */
+    --vig:.55;            /* vignette strength */
+    --curve:.5;           /* screen curve 0..1 */
+    --flick:.3;           /* flicker amount */
+    --warm:.15;           /* warmth (sepia) */
+    --sat:1.1;            /* saturation */
+    --bri:1;              /* brightness */
+    --con:1.05;           /* contrast */
+    --osd:#33ff66;        /* phosphor color */
+    --glass-op:.5;        /* glass reflection */
+  }
+  *{box-sizing:border-box; -webkit-tap-highlight-color:transparent;}
+  body{
+    margin:0; min-height:100vh; color:#cfcfcf;
+    font-family:"Courier New",monospace;
+    background:radial-gradient(1200px 700px at 50% 30%, #1b1e26 0%, #0a0b0f 70%);
+    display:flex; flex-direction:column; align-items:center; justify-content:center;
+    padding:24px 12px; user-select:none;
+  }
+  h1.logo{font-size:15px; letter-spacing:6px; color:#8a8f9a; margin:0 0 14px; font-weight:normal;}
+  h1.logo b{color:var(--osd); text-shadow:0 0 12px var(--osd);}
+
+  /* ============ TV CABINET ============ */
+  .tv{
+    width:min(860px,96vw);
+    padding:26px 26px 20px; border-radius:26px;
+    background:linear-gradient(160deg,#6b4a2f,#4a3120 40%,#3a2617);
+    box-shadow:0 30px 80px rgba(0,0,0,.7), inset 0 2px 3px rgba(255,255,255,.25), inset 0 -3px 6px rgba(0,0,0,.5);
+    position:relative;
+  }
+  .tv.bezel-midnight{background:linear-gradient(160deg,#3a3d44,#22242a 45%,#141519);}
+  .tv.bezel-silver{background:linear-gradient(160deg,#c9ccd2,#9a9ea6 45%,#7c8087);}
+  .brand{position:absolute; top:8px; left:50%; transform:translateX(-50%);
+    font-size:11px; letter-spacing:4px; color:rgba(255,255,255,.35);}
+  .screen-wrap{
+    position:relative; aspect-ratio:4/3; background:#000; overflow:hidden;
+    border-radius:calc(var(--curve)*4%);
+    box-shadow:inset 0 0 60px rgba(0,0,0,.9), 0 0 0 6px #111, 0 0 0 8px rgba(255,255,255,.06);
+  }
+  .screen-inner{position:absolute; inset:0; transform-origin:center;}
+  .screen-inner.powering-off{animation:crtOff .5s ease-in forwards;}
+  @keyframes crtOff{
+    0%{transform:scaleY(1); filter:brightness(1);}
+    55%{transform:scaleY(.012); filter:brightness(3);}
+    80%{transform:scaleY(.012) scaleX(.3); filter:brightness(4);}
+    100%{transform:scale(0); filter:brightness(6);}
+  }
+  .screen-inner.powering-on{animation:crtOn .45s ease-out;}
+  @keyframes crtOn{
+    0%{transform:scaleY(.012); filter:brightness(4);}
+    60%{transform:scaleY(1); filter:brightness(1.6);}
+    100%{transform:scaleY(1); filter:brightness(1);}
+  }
+  /* video layer gets the color treatment */
+  #video-layer{position:absolute; inset:0; transform:scale(calc(1 + var(--curve)*.04));}
+  #video-layer iframe{width:100%; height:100%; border:0; display:block;
+    filter:sepia(var(--warm)) saturate(var(--sat)) brightness(var(--bri)) contrast(var(--con));}
+  #video-layer.hidden{display:none;}
+
+  /* ============ CRT FX LAYERS ============ */
+  .fx{position:absolute; inset:0; pointer-events:none;}
+  .fx-scanlines{background:repeating-linear-gradient(to bottom,
+      transparent 0, transparent var(--sl-size),
+      rgba(0,0,0,var(--sl-opacity)) var(--sl-size),
+      rgba(0,0,0,var(--sl-opacity)) calc(var(--sl-size) + 1px));}
+  .fx-aperture{background:repeating-linear-gradient(to right,
+      rgba(255,0,80,.05) 0 1px, rgba(0,255,80,.04) 1px 2px, rgba(80,0,255,.05) 2px 3px);
+      background-size:3px 100%; opacity:.5;}
+  #noise{position:absolute; inset:0; width:100%; height:100%; image-rendering:pixelated;
+      opacity:var(--noise-opacity); mix-blend-mode:screen;}
+  .fx-vignette{background:radial-gradient(ellipse at center,
+      transparent 52%, rgba(0,0,0,calc(var(--vig)*.55)) 82%, rgba(0,0,0,var(--vig)) 100%);}
+  .fx-glass{background:linear-gradient(115deg, transparent 42%,
+      rgba(255,255,255,calc(var(--glass-op)*.10)) 47%, transparent 55%); border-radius:inherit;}
+  .fx-flicker{background:#fff; opacity:0; animation:flick 4s infinite;}
+  @keyframes flick{
+    0%,100%{opacity:0;} 8%{opacity:calc(var(--flick)*.05);} 9%{opacity:0;}
+    42%{opacity:calc(var(--flick)*.035);} 43%{opacity:0;} 71%{opacity:calc(var(--flick)*.06);} 72%{opacity:0;}
+  }
+  .screen-wrap.burst #noise{opacity:1 !important;}
+  .screen-wrap.burst .fx-flicker{animation:none; opacity:.25;}
+
+  /* color bars channel */
+  #bars{position:absolute; inset:0; display:none;
+    background:linear-gradient(to bottom,
+      #c0c0c0 0 66.6%, #0a0a0a 66.6% 100%);}
+  #bars .top{position:absolute; top:0; left:0; right:0; height:66.6%; display:flex;}
+  #bars .top div{flex:1;}
+  #bars.show{display:block;}
+  #bars .bot{position:absolute; bottom:0; left:0; right:0; height:12%; display:flex;}
+  #bars .bot div{flex:1;}
+
+  /* ============ OSD ============ */
+  .osd{position:absolute; font-family:"Courier New",monospace; color:var(--osd);
+    text-shadow:0 0 6px var(--osd), 2px 0 0 rgba(255,0,60,.45), -2px 0 0 rgba(0,180,255,.45);
+    pointer-events:none; z-index:5;}
+  #osd-ch{top:4%; right:5%; font-size:clamp(28px,6vw,54px); font-weight:bold; opacity:0; transition:opacity .4s;}
+  #osd-banner{bottom:6%; left:5%; right:5%; font-size:clamp(11px,2.4vw,16px);
+    opacity:0; transition:opacity .4s; line-height:1.5;}
+  #osd-vol{bottom:6%; left:5%; font-size:clamp(12px,2.6vw,17px); opacity:0; transition:opacity .3s;}
+  .osd.show{opacity:1 !important;}
+
+  /* ============ CONTROLS UNDER TV ============ */
+  .deck{display:flex; gap:10px; align-items:center; justify-content:center; margin-top:14px; flex-wrap:wrap;}
+  .deck .led{width:9px; height:9px; border-radius:50%; background:#ff2b2b;
+    box-shadow:0 0 8px #ff2b2b;}
+  .deck .led.off{background:#3a1512; box-shadow:none;}
+  .tbtn{font-family:inherit; font-size:11px; letter-spacing:2px; cursor:pointer;
+    background:linear-gradient(#4a4d55,#26282e); color:#ddd; border:1px solid #111;
+    border-radius:8px; padding:9px 14px; box-shadow:0 3px 0 #0c0d10, inset 0 1px 0 rgba(255,255,255,.15);}
+  .tbtn:active{transform:translateY(2px); box-shadow:0 1px 0 #0c0d10;}
+  .tbtn.power{background:linear-gradient(#b03a2e,#7c2118); color:#fff;}
+
+  /* ============ REMOTE ============ */
+  .remote{margin-top:22px; width:230px; padding:18px 14px 22px; border-radius:18px;
+    background:linear-gradient(165deg,#33363d,#1d1f24);
+    box-shadow:0 14px 30px rgba(0,0,0,.6), inset 0 1px 0 rgba(255,255,255,.12);}
+  .remote .rpower{width:100%; margin-bottom:12px; background:linear-gradient(#c0392b,#7c2118); color:#fff;}
+  .rgrid{display:grid; grid-template-columns:repeat(3,1fr); gap:8px; margin-bottom:12px;}
+  .rrow{display:flex; gap:8px; margin-bottom:8px;}
+  .rbtn{font-family:inherit; cursor:pointer; border:1px solid #0c0d10; border-radius:10px;
+    background:linear-gradient(#4b4e56,#2a2c32); color:#e6e6e6; padding:10px 0; font-size:13px;
+    box-shadow:0 3px 0 #0a0b0d, inset 0 1px 0 rgba(255,255,255,.14); text-align:center; flex:1;}
+  .rbtn:active{transform:translateY(2px); box-shadow:0 1px 0 #0a0b0d;}
+  .rbtn.fn{font-size:10px; letter-spacing:1px; padding:11px 0;}
+  .rlab{text-align:center; font-size:9px; letter-spacing:3px; color:#777; margin:10px 0 6px;}
+
+  /* ============ OVERLAYS (guide / settings / add) ============ */
+  .overlay{position:fixed; inset:0; background:rgba(4,5,8,.82); z-index:50;
+    display:none; align-items:center; justify-content:center; padding:16px;}
+  .overlay.show{display:flex;}
+  .panel{width:min(680px,96vw); max-height:88vh; overflow:auto; border-radius:14px;
+    background:#14161b; border:1px solid #2c2f36; padding:20px 22px;
+    box-shadow:0 20px 60px rgba(0,0,0,.8);}
+  .panel h2{margin:0 0 4px; font-size:15px; letter-spacing:3px; color:var(--osd); font-weight:normal;}
+  .panel .sub{font-size:11px; color:#777; margin-bottom:14px;}
+  .gtable{width:100%; border-collapse:collapse; font-size:12px;}
+  .gtable td,.gtable th{padding:9px 8px; border-bottom:1px solid #23262c; text-align:left; vertical-align:top;}
+  .gtable th{color:#777; font-size:10px; letter-spacing:2px;}
+  .gtable tr.chrow{cursor:pointer;}
+  .gtable tr.chrow:hover{background:#1c1f26;}
+  .gtable .chnum{color:var(--osd); font-weight:bold; white-space:nowrap; font-size:15px;}
+  .gtable .now{color:#fff;}
+  .gtable .next{color:#888; font-size:11px;}
+  .closebtn{float:right;}
+  .srow{margin:12px 0;}
+  .srow label{display:flex; justify-content:space-between; font-size:12px; margin-bottom:5px; color:#bbb;}
+  .srow label span:last-child{color:var(--osd);}
+  input[type=range]{width:100%; accent-color:var(--osd);}
+  .swatches{display:flex; gap:8px; margin-top:6px;}
+  .sw{flex:1; padding:9px 0; text-align:center; font-size:11px; cursor:pointer;
+    border:2px solid transparent; border-radius:8px; background:#22252b; color:#ccc; font-family:inherit;}
+  .sw.sel{border-color:var(--osd);}
+  .panel input[type=text], .panel textarea{width:100%; background:#0d0f13; border:1px solid #2c2f36;
+    color:#ddd; border-radius:8px; padding:9px 10px; font-family:inherit; font-size:13px; margin-bottom:10px;}
+  .panel textarea{height:90px; resize:vertical;}
+  .del{color:#ff7b7b; cursor:pointer; font-size:11px; margin-left:10px;}
+  .hint{font-size:11px; color:#666; line-height:1.6; margin-top:12px;}
+  kbd{background:#22252b; border:1px solid #3a3d44; border-radius:4px; padding:1px 6px; font-size:11px;}
+  @media (max-width:640px){ .tv{padding:16px 14px 12px;} }
+</style>
+</head>
+<body>
+<h1 class="logo"><b>◉</b> CRTV &nbsp;·&nbsp; YOUTUBE ON A CATHODE RAY</h1>
+
+<div class="tv" id="cabinet">
+  <div class="brand">CRTV&nbsp;&nbsp;TRINITRON&nbsp;·&nbsp;KV-27FV</div>
+  <div class="screen-wrap" id="screen">
+    <div class="screen-inner" id="screenInner">
+      <div id="video-layer"><div id="player"></div></div>
+      <div id="bars">
+        <div class="top">
+          <div style="background:#c0c0c0"></div><div style="background:#c0c000"></div>
+          <div style="background:#00c0c0"></div><div style="background:#00c000"></div>
+          <div style="background:#c000c0"></div><div style="background:#c00000"></div>
+          <div style="background:#0000c0"></div>
+        </div>
+        <div class="bot">
+          <div style="background:#0a0a0a"></div><div style="background:#c0c0c0"></div>
+          <div style="background:#202020"></div><div style="background:#0a0a0a"></div>
+        </div>
+      </div>
+      <canvas id="noise"></canvas>
+      <div class="fx fx-scanlines"></div>
+      <div class="fx fx-aperture"></div>
+      <div class="fx fx-flicker"></div>
+      <div class="fx fx-vignette"></div>
+      <div class="fx fx-glass"></div>
+      <div class="osd" id="osd-ch">CH 02</div>
+      <div class="osd" id="osd-banner"></div>
+      <div class="osd" id="osd-vol"></div>
+    </div>
+  </div>
+  <div class="deck">
+    <div class="led off" id="led"></div>
+    <button class="tbtn power" id="deck-power">⏻ POWER</button>
+    <button class="tbtn" id="deck-chdn">CH −</button>
+    <button class="tbtn" id="deck-chup">CH +</button>
+    <button class="tbtn" id="deck-guide">GUIDE</button>
+    <button class="tbtn" id="deck-menu">PICTURE</button>
+  </div>
+</div>
+
+<div class="remote">
+  <button class="rbtn rpower" id="r-power">⏻ POWER</button>
+  <div class="rlab">CHANNEL</div>
+  <div class="rrow">
+    <button class="rbtn" id="r-chdn">CH −</button>
+    <button class="rbtn" id="r-chup">CH +</button>
+  </div>
+  <div class="rgrid">
+    <button class="rbtn num" data-n="1">1</button><button class="rbtn num" data-n="2">2</button><button class="rbtn num" data-n="3">3</button>
+    <button class="rbtn num" data-n="4">4</button><button class="rbtn num" data-n="5">5</button><button class="rbtn num" data-n="6">6</button>
+    <button class="rbtn num" data-n="7">7</button><button class="rbtn num" data-n="8">8</button><button class="rbtn num" data-n="9">9</button>
+  </div>
+  <div class="rlab">VOLUME</div>
+  <div class="rrow">
+    <button class="rbtn" id="r-voldn">VOL −</button>
+    <button class="rbtn" id="r-volup">VOL +</button>
+    <button class="rbtn fn" id="r-mute">MUTE</button>
+  </div>
+  <div class="rrow">
+    <button class="rbtn fn" id="r-guide">GUIDE</button>
+    <button class="rbtn fn" id="r-menu">PICTURE</button>
+  </div>
+</div>
+
+<!-- GUIDE -->
+<div class="overlay" id="guideOv">
+  <div class="panel">
+    <button class="tbtn closebtn" data-close="guideOv">CLOSE ✕</button>
+    <h2>📺 TV GUIDE</h2>
+    <div class="sub">Click a channel to tune in. Lineups loop like real broadcast.</div>
+    <table class="gtable" id="guideTable"></table>
+  </div>
+</div>
+
+<!-- PICTURE / SETTINGS -->
+<div class="overlay" id="menuOv">
+  <div class="panel">
+    <button class="tbtn closebtn" data-close="menuOv">CLOSE ✕</button>
+    <h2>🎛 PICTURE &amp; SET</h2>
+    <div class="sub">Everything saves automatically on this device.</div>
+    <div id="sliders"></div>
+    <div class="srow"><label>Phosphor (on-screen text)</label>
+      <div class="swatches" id="osdSw">
+        <button class="sw" data-osd="#33ff66" style="color:#33ff66">GREEN</button>
+        <button class="sw" data-osd="#ffb000" style="color:#ffb000">AMBER</button>
+        <button class="sw" data-osd="#e8f4ff" style="color:#e8f4ff">WHITE</button>
+      </div></div>
+    <div class="srow"><label>Cabinet finish</label>
+      <div class="swatches" id="bezelSw">
+        <button class="sw" data-bezel="">WALNUT</button>
+        <button class="sw" data-bezel="bezel-midnight">MIDNIGHT</button>
+        <button class="sw" data-bezel="bezel-silver">SILVER</button>
+      </div></div>
+    <div class="srow"><label>Glass reflection</label>
+      <div class="swatches" id="glassSw">
+        <button class="sw" data-glass="1">ON</button>
+        <button class="sw" data-glass="0">OFF</button>
+      </div></div>
+    <div class="srow"><button class="tbtn" id="resetFx" style="width:100%">↺ RESET PICTURE DEFAULTS</button></div>
+    <h2 style="margin-top:22px">📡 MY CHANNELS</h2>
+    <div class="sub">Add your own channels — paste YouTube links, one per line.</div>
+    <input type="text" id="newChName" placeholder="Channel name (e.g. HORROR HOUR)">
+    <textarea id="newChUrls" placeholder="https://www.youtube.com/watch?v=...&#10;https://youtu.be/..."></textarea>
+    <button class="tbtn" id="addCh" style="width:100%">＋ ADD CHANNEL</button>
+    <div id="myChList" style="margin-top:10px"></div>
+    <div class="hint">
+      Keys: <kbd>↑</kbd><kbd>↓</kbd> channel · <kbd>←</kbd><kbd>→</kbd> volume · <kbd>0–9</kbd> tune ·
+      <kbd>G</kbd> guide · <kbd>M</kbd> mute · <kbd>P</kbd> power · <kbd>S</kbd> picture menu.<br>
+      Videos play through YouTube's official player — a few videos block embedding and will show a fallback.
+    </div>
+  </div>
+</div>
+
+<script src="https://www.youtube.com/iframe_api"></script>
+<script>
+/* ================= DATA ================= */
+const DEFAULT_CHANNELS = [
+  {num:2, name:"MUSIC BOX", type:"videos", pos:0, videos:[
+    {id:"dQw4w9WgXcQ", title:"Rick Astley — Never Gonna Give You Up"},
+    {id:"9bZkp7q19f0", title:"PSY — Gangnam Style"},
+    {id:"60ItHLz5WEA", title:"Alan Walker — Faded"},
+    {id:"JGwWNGJdvx8", title:"Ed Sheeran — Shape of You"},
+    {id:"kJQP7kiw5Fk", title:"Luis Fonsi — Despacito ft. Daddy Yankee"}]},
+  {num:3, name:"TOON TOWN", type:"videos", pos:0, videos:[
+    {id:"aqz-KE-bpKQ", title:"Big Buck Bunny (Blender short film)"},
+    {id:"J---aiyznGQ", title:"Keyboard Cat — THE ORIGINAL"},
+    {id:"txqiwrbYGrs", title:"David After Dentist"},
+    {id:"dMH0bHeiRNg", title:"Evolution of Dance"}]},
+  {num:4, name:"LO-FI FM", type:"videos", pos:0, live:true, videos:[
+    {id:"jfKfPfyJRdk", title:"lofi hip hop radio — beats to relax/study to (LIVE)"}]},
+  {num:5, name:"CINEMA", type:"videos", pos:0, videos:[
+    {id:"R6MlUcmOul8", title:"Tears of Steel — Blender VFX open movie"}]},
+  {num:6, name:"TEST PATTERN", type:"bars", pos:0, videos:[]},
+  {num:7, name:"OFF AIR", type:"static", pos:0, videos:[]},
+];
+const DEF_FX = {noise:.35, scan:.5, scanSize:3, vig:.55, curve:.5, flick:.3,
+  warm:.15, sat:1.1, bri:1, con:1.05, glass:1};
+const SLIDERS = [
+  {k:"noise", label:"Static / snow", min:0, max:1, step:.01, css:"--noise-opacity"},
+  {k:"scan", label:"Scanlines", min:0, max:1, step:.01, css:"--sl-opacity"},
+  {k:"scanSize", label:"Scanline spacing", min:2, max:6, step:1, css:"--sl-size", unit:"px"},
+  {k:"vig", label:"Vignette (tube darkening)", min:0, max:1, step:.01, css:"--vig"},
+  {k:"curve", label:"Screen curve", min:0, max:1, step:.01, css:"--curve"},
+  {k:"flick", label:"Flicker", min:0, max:1, step:.01, css:"--flick"},
+  {k:"warm", label:"Warmth", min:0, max:.6, step:.01, css:"--warm"},
+  {k:"sat", label:"Saturation", min:0, max:2, step:.05, css:"--sat"},
+  {k:"bri", label:"Brightness", min:.4, max:1.6, step:.05, css:"--bri"},
+  {k:"con", label:"Contrast", min:.4, max:1.8, step:.05, css:"--con"},
+];
+let fx = {...DEF_FX};
+let osdColor = "#33ff66", bezel = "", volume = 70, muted = false;
+let channels = [], chIdx = 0, power = false;
+try{
+  const s = JSON.parse(localStorage.getItem("crtv-fx")||"{}");
+  fx = {...DEF_FX, ...s.fx}; osdColor = s.osd||osdColor; bezel = s.bezel||"";
+  volume = s.volume??70;
+  const mine = JSON.parse(localStorage.getItem("crtv-mych")||"[]");
+  channels = DEFAULT_CHANNELS.concat(mine.map((c,i)=>({...c, num:8+i, pos:0})));
+}catch(e){ channels = DEFAULT_CHANNELS.map(c=>({...c})); }
+function save(){ try{ localStorage.setItem("crtv-fx",
+  JSON.stringify({fx, osd:osdColor, bezel, volume})); }catch(e){} }
+function saveMy(){ try{ localStorage.setItem("crtv-mych",
+  JSON.stringify(channels.slice(DEFAULT_CHANNELS.length).map(c=>({name:c.name,type:"videos",videos:c.videos})))); }catch(e){} }
+
+/* ================= STATIC NOISE ================= */
+const noiseC = document.getElementById("noise"), nx = noiseC.getContext("2d");
+noiseC.width = 160; noiseC.height = 120;
+function drawNoise(){
+  const d = nx.createImageData(160,120), p = d.data;
+  for(let i=0;i<p.length;i+=4){ const v = Math.random()*255|0;
+    p[i]=p[i+1]=p[i+2]=v; p[i+3]=255; }
+  nx.putImageData(d,0,0);
+}
+drawNoise(); setInterval(()=>{ if(power) drawNoise(); }, 90);
+
+/* ================= YOUTUBE PLAYER ================= */
+let player = null, apiReady = false, playerReady = false, pendingTune = false;
+function onYouTubeIframeAPIReady(){ apiReady = true; if(pendingTune) ensurePlayer(); }
+function ensurePlayer(){
+  if(player || !apiReady) { pendingTune = !player; return; }
+  player = new YT.Player("player", {
+    width:"100%", height:"100%",
+    playerVars:{autoplay:1, controls:0, disablekb:1, rel:0, modestbranding:1,
+      iv_load_policy:3, playsinline:1, fs:0},
+    events:{ onReady:()=>{ playerReady=true; player.setVolume(muted?0:volume); playCurrent(); banner(); },
+             onStateChange:onPS }
+  });
+}
+function onPS(e){
+  if(e.data === YT.PlayerState.ENDED){
+    const ch = channels[chIdx];
+    if(ch.type==="videos" && !ch.live && ch.videos.length>1){
+      ch.pos = (ch.pos+1)%ch.videos.length;
+      player.loadVideoById(ch.videos[ch.pos].id);
+      banner();
+    }
+  }
+}
+
+/* ================= TUNING ================= */
+const $ = id=>document.getElementById(id);
+const screen=$("screen"), inner=$("screenInner"), vlayer=$("video-layer"), bars=$("bars");
+function chNum(n){ n=String(n).padStart(2,"0"); return "CH "+n; }
+function osdShow(el, ms){
+  el.classList.add("show"); clearTimeout(el._t);
+  el._t = setTimeout(()=>el.classList.remove("show"), ms);
+}
+function banner(){
+  const ch = channels[chIdx], b = $("osd-banner");
+  let txt = chNum(ch.num)+" · "+ch.name;
+  if(ch.type==="videos" && ch.videos[ch.pos]) txt += "<br>NOW: "+ch.videos[ch.pos].title;
+  if(ch.type==="bars") txt += "<br>— PLEASE STAND BY —";
+  if(ch.type==="static") txt += "<br>— NO CARRIER —";
+  b.innerHTML = txt; $("osd-ch").textContent = chNum(ch.num);
+  osdShow($("osd-ch"), 2600); osdShow(b, 4200);
+}
+function playCurrent(){
+  const ch = channels[chIdx];
+  vlayer.classList.toggle("hidden", ch.type!=="videos");
+  bars.classList.toggle("show", ch.type==="bars");
+  if(ch.type==="videos" && playerReady && ch.videos[ch.pos])
+    player.loadVideoById(ch.videos[ch.pos].id);
+}
+function tune(i, burst=true){
+  if(!power) return;
+  chIdx = (i+channels.length)%channels.length;
+  const doTune = ()=>{ playCurrent(); banner(); };
+  if(burst){
+    screen.classList.add("burst");
+    vlayer.classList.add("hidden"); bars.classList.remove("show");
+    setTimeout(()=>{ screen.classList.remove("burst"); doTune(); }, 380);
+  } else doTune();
+}
+const chUp = ()=>tune(chIdx+1), chDn = ()=>tune(chIdx-1);
+function tuneNum(n){ const i = channels.findIndex(c=>c.num===n); if(i>=0) tune(i); }
+
+/* ================= VOLUME ================= */
+function volShow(){
+  const v = $("osd-vol"), n = Math.round((muted?0:volume)/10);
+  v.textContent = (muted?"MUTE ":"VOL ") + "■".repeat(n) + "□".repeat(10-n);
+  osdShow(v, 1400);
+}
+function setVol(v){
+  volume = Math.max(0, Math.min(100, v)); muted = false;
+  if(playerReady) player.setVolume(volume); volShow(); save();
+}
+const volUp=()=>setVol(volume+10), volDn=()=>setVol(volume-10);
+function toggleMute(){
+  muted = !muted;
+  if(playerReady){ muted ? player.mute() : (player.unMute(), player.setVolume(volume)); }
+  volShow();
+}
+
+/* ================= POWER ================= */
+function powerOn(){
+  power = true; $("led").classList.remove("off");
+  inner.classList.remove("powering-off"); inner.classList.add("powering-on");
+  setTimeout(()=>inner.classList.remove("powering-on"), 500);
+  pendingTune = true; ensurePlayer();
+  if(playerReady) tune(chIdx); else setTimeout(()=>tune(chIdx,false), 600);
+}
+function powerOff(){
+  power = false; $("led").classList.add("off");
+  inner.classList.add("powering-off");
+  setTimeout(()=>{ if(playerReady) player.pauseVideo(); }, 450);
+}
+const togglePower = ()=> power ? powerOff() : powerOn();
+
+/* ================= GUIDE ================= */
+function renderGuide(){
+  const t = $("guideTable");
+  let h = "<tr><th>CH</th><th>STATION</th><th>NOW / NEXT</th></tr>";
+  channels.forEach((c,i)=>{
+    let prog;
+    if(c.type==="bars") prog = '<span class="now">— TEST PATTERN —</span>';
+    else if(c.type==="static") prog = '<span class="now">— OFF AIR —</span>';
+    else{
+      const now = c.videos[c.pos]?c.videos[c.pos].title:"";
+      const nxv = c.videos[(c.pos+1)%c.videos.length];
+      prog = '<span class="now">'+now+"</span><br><span class='next'>"+
+        (c.live?"● live, always on":(nxv&&nxv!==c.videos[c.pos]?"next: "+nxv.title:"loops"))+"</span>";
+    }
+    h += `<tr class="chrow" data-i="${i}"><td class="chnum">${chNum(c.num)}</td>
+      <td><b>${c.name}</b></td><td>${prog}</td></tr>`;
+  });
+  t.innerHTML = h;
+  t.querySelectorAll(".chrow").forEach(r=>r.onclick=()=>{
+    closeOv("guideOv"); if(!power) powerOn(); tune(+r.dataset.i);
+  });
+}
+
+/* ================= FX PANEL ================= */
+function applyFx(){
+  const r = document.documentElement.style;
+  SLIDERS.forEach(s=>r.setProperty(s.css, fx[s.k]+(s.unit||"")));
+  r.setProperty("--osd", osdColor);
+  r.setProperty("--glass-op", fx.glass);
+  $("cabinet").className = "tv "+bezel;
+  document.querySelectorAll("#osdSw .sw").forEach(b=>b.classList.toggle("sel", b.dataset.osd===osdColor));
+  document.querySelectorAll("#bezelSw .sw").forEach(b=>b.classList.toggle("sel", b.dataset.bezel===bezel));
+  document.querySelectorAll("#glassSw .sw").forEach(b=>b.classList.toggle("sel", b.dataset.glass==String(fx.glass)));
+}
+function buildSliders(){
+  const w = $("sliders"); w.innerHTML = "";
+  SLIDERS.forEach(s=>{
+    const row = document.createElement("div"); row.className="srow";
+    row.innerHTML = `<label><span>${s.label}</span><span id="v-${s.k}">${fx[s.k]}</span></label>
+      <input type="range" min="${s.min}" max="${s.max}" step="${s.step}" value="${fx[s.k]}">`;
+    const inp = row.querySelector("input");
+    inp.oninput = ()=>{ fx[s.k]=+inp.value;
+      document.documentElement.style.setProperty(s.css, fx[s.k]+(s.unit||""));
+      row.querySelector("span:last-child").textContent = inp.value; save(); };
+    w.appendChild(row);
+  });
+}
+document.querySelectorAll("#osdSw .sw").forEach(b=>b.onclick=()=>{osdColor=b.dataset.osd; applyFx(); save();});
+document.querySelectorAll("#bezelSw .sw").forEach(b=>b.onclick=()=>{bezel=b.dataset.bezel; applyFx(); save();});
+document.querySelectorAll("#glassSw .sw").forEach(b=>b.onclick=()=>{fx.glass=+b.dataset.glass; applyFx(); save();});
+$("resetFx").onclick = ()=>{ fx={...DEF_FX}; osdColor="#33ff66"; bezel=""; buildSliders(); applyFx(); save(); };
+
+/* ================= CUSTOM CHANNELS ================= */
+function parseIds(text){
+  const ids = [];
+  const re = /(?:youtube\.com\/(?:watch\?[^#\s]*v=|embed\/|shorts\/)|youtu\.be\/)([A-Za-z0-9_-]{11})/g;
+  let m; while((m=re.exec(text))) if(!ids.includes(m[1])) ids.push(m[1]);
+  return ids;
+}
+function renderMy(){
+  const w = $("myChList"); w.innerHTML = "";
+  channels.slice(DEFAULT_CHANNELS.length).forEach(c=>{
+    const d = document.createElement("div");
+    d.style.cssText="font-size:12px;padding:8px;border-bottom:1px solid #23262c;color:#bbb";
+    d.innerHTML = `<b style="color:var(--osd)">${chNum(c.num)}</b> ${c.name} (${c.videos.length} videos)
+      <span class="del" data-n="${c.num}">delete ✕</span>`;
+    w.appendChild(d);
+  });
+  w.querySelectorAll(".del").forEach(x=>x.onclick=()=>{
+    channels = channels.filter(c=>c.num!==+x.dataset.n); saveMy(); renderMy(); renderGuide();
+  });
+}
+$("addCh").onclick = ()=>{
+  const name = ($("newChName").value||"MY CHANNEL").toUpperCase().slice(0,24);
+  const ids = parseIds($("newChUrls").value);
+  if(!ids.length){ alert("Paste at least one YouTube link."); return; }
+  const num = Math.max(7, ...channels.map(c=>c.num)) + 1;
+  if(num > 12){ alert("Channel list is full (max 12). Delete one first."); return; }
+  channels.push({num, name, type:"videos", pos:0,
+    videos: ids.map(id=>({id, title:"YouTube video "+id}))});
+  $("newChName").value = ""; $("newChUrls").value = "";
+  saveMy(); renderMy(); renderGuide();
+};
+
+/* ================= OVERLAYS / INPUT ================= */
+function openOv(id){ $(id).classList.add("show"); if(id==="guideOv") renderGuide(); }
+function closeOv(id){ $(id).classList.remove("show"); }
+document.querySelectorAll("[data-close]").forEach(b=>b.onclick=()=>closeOv(b.dataset.close));
+document.querySelectorAll(".overlay").forEach(o=>o.addEventListener("click",e=>{ if(e.target===o) o.classList.remove("show"); }));
+const bind = (id,fn)=>$(id).addEventListener("click",fn);
+bind("deck-power",togglePower); bind("r-power",togglePower);
+bind("deck-chup",chUp); bind("r-chup",chUp); bind("deck-chdn",chDn); bind("r-chdn",chDn);
+bind("deck-guide",()=>openOv("guideOv")); bind("r-guide",()=>openOv("guideOv"));
+bind("deck-menu",()=>openOv("menuOv")); bind("r-menu",()=>openOv("menuOv"));
+bind("r-volup",volUp); bind("r-voldn",volDn); bind("r-mute",toggleMute);
+document.querySelectorAll(".num").forEach(b=>b.onclick=()=>tuneNum(+b.dataset.n));
+document.addEventListener("keydown",e=>{
+  const tag = (e.target.tagName||"").toLowerCase();
+  if(tag==="input"||tag==="textarea") return;
+  if(e.key==="ArrowUp"){e.preventDefault();chUp();}
+  else if(e.key==="ArrowDown"){e.preventDefault();chDn();}
+  else if(e.key==="ArrowRight") volUp();
+  else if(e.key==="ArrowLeft") volDn();
+  else if(/^[0-9]$/.test(e.key)) tuneNum(+e.key);
+  else if(e.key==="g"||e.key==="G") openOv("guideOv");
+  else if(e.key==="m"||e.key==="M") toggleMute();
+  else if(e.key==="p"||e.key==="P") togglePower();
+  else if(e.key==="s"||e.key==="S") openOv("menuOv");
+  else if(e.key==="Escape") document.querySelectorAll(".overlay").forEach(o=>o.classList.remove("show"));
+});
+
+/* ================= INIT ================= */
+buildSliders(); applyFx(); renderMy(); renderGuide();
+inner.classList.add("powering-off"); // start with a dark, powered-off tube
+</script>
+</body>
+</html>
